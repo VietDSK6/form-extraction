@@ -290,6 +290,51 @@ async def test_accepts_polished_text_value_with_verbatim_evidence():
 
 
 @pytest.mark.asyncio
+async def test_phone_number_is_rebuilt_from_verbatim_spoken_evidence():
+    transcript = "số điện thoại không chín tám một bốn hai bốn sáu chín một"
+    app, _ = build_app(
+        payload={
+            "extractions": [
+                {
+                    "field_code": "soDienThoai",
+                    "value": "981424691",
+                    "status": "extracted",
+                    "evidence": transcript,
+                }
+            ]
+        }
+    )
+
+    response = await request(
+        app,
+        "POST",
+        "/api/v1/openai/extract-form",
+        json={
+            "transcript": transcript,
+            "fields": [
+                {
+                    "field_code": "soDienThoai",
+                    "label": "Số điện thoại liên hệ",
+                    "type": "text",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["extractions"] == [
+        {
+            "field_code": "soDienThoai",
+            "value": "0981424691",
+            "status": "extracted",
+            "evidence": transcript,
+        }
+    ]
+    assert response.json()["missing_required"] == []
+
+
+@pytest.mark.asyncio
 async def test_invalid_values_and_evidence_become_ambiguous():
     model_payload = {
         "extractions": [

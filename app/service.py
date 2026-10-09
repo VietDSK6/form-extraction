@@ -1,6 +1,8 @@
 import json
 import math
+import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -46,6 +48,8 @@ Quy tắc:
 7. Không trả các field không đủ bằng chứng. Không tạo placeholder hoặc giá trị null cho field thiếu.
 8. value của text/textarea là nội dung đã làm sạch, không bắt buộc giống nguyên văn evidence:
    - bỏ từ đệm, lặp từ và phần mở đầu hội thoại không mang thông tin;
+   - nếu người nói lặp/stutter hoặc tự sửa ngay lập tức, giữ lại phiên bản đầy đủ cuối cùng;
+     ví dụ "đỗ văn đỗ văn an" được hiểu là "Đỗ Văn An" khi không có cách hiểu hợp lý khác;
    - sửa viết hoa, khoảng trắng, dấu câu và lỗi chính tả hiển nhiên của STT;
    - tên riêng được viết hoa tự nhiên khi ngữ cảnh đủ rõ;
    - số điện thoại, mã định danh và mã hồ sơ được chuẩn hóa về chữ số/ký tự chuẩn,
@@ -95,6 +99,66 @@ def _normalized_quote(value: str) -> str:
 
 def _same_scalar(left: Any, right: Any) -> bool:
     return type(left) is type(right) and left == right
+
+
+def _fold_vietnamese(value: str) -> str:
+    folded = "".join(
+        character
+        for character in unicodedata.normalize("NFD", value.casefold())
+        if unicodedata.category(character) != "Mn"
+    )
+    return folded.replace("đ", "d")
+
+
+_PHONE_DIGIT_WORDS = {
+    "khong": "0",
+    "mot": "1",
+    "hai": "2",
+    "ba": "3",
+    "bon": "4",
+    "tu": "4",
+    "nam": "5",
+    "lam": "5",
+    "sau": "6",
+    "bay": "7",
+    "tam": "8",
+    "chin": "9",
+}
+
+
+def _is_phone_field(field: FormFieldDefinition) -> bool:
+    descriptor = _fold_vietnamese(
+        " ".join(
+            part
+            for part in (
+                field.field_code,
+                field.label,
+                field.extraction_hint,
+            )
+            if part
+        )
+    )
+    return any(
+        marker in descriptor
+        for marker in ("so dien thoai", "dien thoai", "sdt", "phone", "mobile")
+    )
+
+
+def _phone_digits_from_evidence(evidence: str | None) -> str | None:
+    if not evidence:
+        return None
+
+    parts: list[str] = []
+    for token in re.findall(r"\d+|[^\W\d_]+", evidence, flags=re.UNICODE):
+        if token.isdigit():
+            parts.append(token)
+            continue
+        digit = _PHONE_DIGIT_WORDS.get(_fold_vietnamese(token))
+        if digit is not None:
+            parts.append(digit)
+
+    candidate = "".join(parts)
+    return candidate if 9 <= len(candidate) <= 15 else None
 
 
 class ExtractionService:
@@ -391,7 +455,13 @@ class ExtractionService:
                 continue
 
             status = raw.status if raw.status in {"extracted", "ambiguous"} else "ambiguous"
-            value, value_error = self._normalize_value(field, raw.value)
+            evidence = raw.evidence.strip() if isinstance(raw.evidence, str) else None
+            evidence_is_valid = self._evidence_is_valid(evidence, transcript)
+            value, value_error = self._normalize_value(
+                field,
+                raw.value,
+                evidence if evidence_is_valid else None,
+            )
             if value_error:
                 status = "ambiguous"
                 value = None
@@ -403,8 +473,7 @@ class ExtractionService:
                     )
                 )
 
-            evidence = raw.evidence.strip() if isinstance(raw.evidence, str) else None
-            if status == "extracted" and not self._evidence_is_valid(evidence, transcript):
+            if status == "extracted" and not evidence_is_valid:
                 status = "ambiguous"
                 warnings.append(
                     ExtractionWarning(
@@ -430,10 +499,15 @@ class ExtractionService:
         self,
         field: FormFieldDefinition,
         value: Any,
+        evidence: str | None = None,
     ) -> tuple[Any, str | None]:
         if field.type in {"text", "textarea"}:
             if not isinstance(value, str) or not value.strip():
                 return None, "invalid_text"
+            if _is_phone_field(field):
+                evidence_digits = _phone_digits_from_evidence(evidence)
+                if evidence_digits is not None:
+                    return evidence_digits, None
             return value.strip(), None
 
         if field.type == "number":
