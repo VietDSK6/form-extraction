@@ -243,6 +243,53 @@ async def test_extracts_all_supported_types_and_reports_usage():
 
 
 @pytest.mark.asyncio
+async def test_accepts_polished_text_value_with_verbatim_evidence():
+    transcript = "ờ mô tả là sự cố xảy ra do tai nạn giao thông"
+    app, completions = build_app(
+        payload={
+            "extractions": [
+                {
+                    "field_code": "moTa",
+                    "value": "Sự cố xảy ra do tai nạn giao thông.",
+                    "status": "extracted",
+                    "evidence": "mô tả là sự cố xảy ra do tai nạn giao thông",
+                }
+            ]
+        }
+    )
+
+    response = await request(
+        app,
+        "POST",
+        "/api/v1/openai/extract-form",
+        json={
+            "transcript": transcript,
+            "fields": [
+                {
+                    "field_code": "moTa",
+                    "label": "Mô tả chi tiết",
+                    "type": "textarea",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["extractions"] == [
+        {
+            "field_code": "moTa",
+            "value": "Sự cố xảy ra do tai nạn giao thông.",
+            "status": "extracted",
+            "evidence": "mô tả là sự cố xảy ra do tai nạn giao thông",
+        }
+    ]
+    system_prompt = completions.calls[0]["messages"][0]["content"]
+    assert "value của text/textarea là nội dung đã làm sạch" in system_prompt
+    assert "Không sửa chính tả, dấu câu hoặc từ ngữ trong evidence" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_invalid_values_and_evidence_become_ambiguous():
     model_payload = {
         "extractions": [

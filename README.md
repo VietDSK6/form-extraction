@@ -4,6 +4,10 @@ FastAPI độc lập để trích xuất nhiều field từ một transcript ti�
 schema biểu mẫu. Service dùng OpenAI Chat Completions Structured Outputs, sau
 đó hậu kiểm field code, kiểu dữ liệu, option và evidence trước khi trả kết quả.
 
+Với field `text` và `textarea`, `value` được làm sạch cách viết, viết hoa, dấu
+câu và từ đệm nhưng không được thêm dữ kiện. `evidence` vẫn là trích dẫn nguyên
+văn từ transcript để giao diện cho người dùng đối chiếu trước khi áp dụng.
+
 Service không thay thế STT. Mini App tiếp tục dùng Zipformer để lấy transcript
 rồi gửi transcript trực tiếp sang API này trong bản demo không có quyền sửa
 backend.
